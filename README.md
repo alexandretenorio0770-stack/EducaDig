@@ -14,3 +14,12 @@ Projeto desenvolvido para a disciplina de Desenvolvimento de Soluções Sustent�
    ```bash
    python -m venv venv
    source venv/bin/activate  # No Windows: venv\Scripts\activate
+   ```
+3. Executar o Web Scraping (Geração de Dados)
+    ```
+    python src/scraping.py
+    ```
+4. Executar a Aplicação Streamlit
+   ```
+   streamlit run app/main.py
+   ```  
