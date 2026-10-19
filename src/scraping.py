@@ -17,7 +17,7 @@ def raspar_noticias_esg():
 
     soup = BeautifulSoup(resposta.content, "html.parser")
     
-    artigos = soup.find_all("article", limit=5)  # Coleta as 5 primeiras matérias
+    artigos = soup.find_all("article", limit=5) 
     
     dados_coletados = []
 

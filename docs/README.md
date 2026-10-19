@@ -17,9 +17,9 @@ Projeto desenvolvido para a disciplina de Desenvolvimento de Soluções Sustent�
    ```
 3. Executar o Web Scraping (Geração de Dados)
     ```
-    python src/scraping.py
+    python src/scraping_dynamic.py
     ```
-4. Executar a Aplicação Streamlit
+4. Executar a Aplicação Streamlit e FastApi
    ```
-   streamlit run app/main.py
+   honcho start
    ```  
