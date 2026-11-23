@@ -1,8 +1,13 @@
+import os
+os.environ["HF_HOME"] = "C:\\hf_cache"
+os.environ["TRANSFORMERS_CACHE"] = "C:\\hf_cache"
+
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
 from transformers import pipeline
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List
 import pandas as pd
@@ -11,38 +16,52 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title="EducaDig ESG API - Enterprise Local",
-    description="API local com ETL em lote, NLP (Hugging Face) e RAG leve (TF-IDF) para monitoramento ESG/ODS 4.",
-    version="4.0.0"
-)
-
 # --- CAMINHOS DO PROJETO ---
 RAIZ_PROJETO = Path(__file__).resolve().parent.parent
 CAMINHO_RAW = RAIZ_PROJETO / "data" / "raw" / "noticias_esg.csv"
 PASTA_PROCESSED = RAIZ_PROJETO / "data" / "processed"
 CAMINHO_PROCESSED = PASTA_PROCESSED / "noticias_classificadas.csv"
 
-# --- MODELO LLM LOCAL ---
+# ==============================================================================
+# BLOCO DE CARREGAMENTO DO MODELO LLM LOCAL (INÍCIO)
+# ==============================================================================
 MODELO_NOME = "pysentimiento/bertweet-pt-sentiment"
 analisador_nlp = None
+
+def obter_modelo():
+    """Carrega o modelo na memória (no startup ou sob demanda na 1ª requisição)."""
+    global analisador_nlp
+    if analisador_nlp is None:
+        logger.info(f"Carregando modelo local: {MODELO_NOME}...")
+        analisador_nlp = pipeline("sentiment-analysis", model=MODELO_NOME)
+        logger.info("Modelo carregado com sucesso!")
+    return analisador_nlp
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        obter_modelo()
+    except Exception as e:
+        logger.error(f"Falha no startup ao carregar modelo: {e}")
+    yield
+    global analisador_nlp
+    analisador_nlp = None
+
+app = FastAPI(
+    title="EducaDig ESG API - Enterprise Local",
+    description="API local com ETL em lote, NLP (Hugging Face) e RAG leve (TF-IDF) para monitoramento ESG/ODS 4.",
+    version="4.0.0",
+    lifespan=lifespan
+)
+# ==============================================================================
+# BLOCO DE CARREGAMENTO DO MODELO LLM LOCAL (FIM)
+# ==============================================================================
 
 MAPA_SENTIMENTOS = {
     "POS": "Positivo (Impacto favorável / Avanço no ODS 4)",
     "NEU": "Neutro (Informativo / Descritivo)",
     "NEG": "Negativo (Alerta / Desafio ou déficit educacional)"
 }
-
-@app.on_event("startup")
-def carregar_modelo_local():
-    global analisador_nlp
-    try:
-        logger.info(f"Carregando modelo local: {MODELO_NOME}...")
-        analisador_nlp = pipeline("sentiment-analysis", model=MODELO_NOME)
-        logger.info("Modelo carregado com sucesso!")
-    except Exception as e:
-        logger.error(f"Erro ao carregar modelo: {e}")
-        analisador_nlp = None
 
 # --- SCHEMAS PYDANTIC ---
 class TextoEntrada(BaseModel):
@@ -91,15 +110,23 @@ def listar_noticias():
 # --- ROTA 2: CLASSIFICAÇÃO INDIVIDUAL ---
 @app.post("/processar_texto", response_model=ResultadoAnalise, status_code=status.HTTP_200_OK)
 def processar_texto(payload: TextoEntrada):
-    if analisador_nlp is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Modelo LLM local indisponível.")
-
     texto_limpo = payload.texto.strip()
     if len(texto_limpo) < 10:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="O texto precisa ter ao menos 10 caracteres válidos.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O texto precisa ter ao menos 10 caracteres válidos."
+        )
 
     try:
-        predicao = analisador_nlp(texto_limpo, truncation=True, max_length=512)[0]
+        modelo = obter_modelo()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Falha ao carregar modelo LLM local: {str(e)}"
+        )
+
+    try:
+        predicao = modelo(texto_limpo, truncation=True, max_length=512)[0]
         sigla = predicao["label"]
         score = round(float(predicao["score"]), 4)
 
@@ -117,10 +144,16 @@ def processar_texto(payload: TextoEntrada):
 # --- ROTA 3: ENRIQUECIMENTO EM LOTE (ETL + IA) ---
 @app.post("/processar_lote", response_model=ResumoLote, status_code=status.HTTP_200_OK)
 def processar_lote():
-    if analisador_nlp is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Modelo LLM local indisponível.")
     if not CAMINHO_RAW.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Arquivo data/raw/noticias_esg.csv não encontrado.")
+
+    try:
+        modelo = obter_modelo()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Falha ao carregar modelo LLM local: {str(e)}"
+        )
 
     try:
         df = pd.read_csv(CAMINHO_RAW).fillna("")
@@ -130,7 +163,7 @@ def processar_lote():
         coluna_texto = df.columns[0]
         textos = df[coluna_texto].astype(str).tolist()
 
-        predicoes = analisador_nlp(textos, truncation=True, max_length=512)
+        predicoes = modelo(textos, truncation=True, max_length=512)
         df["sentimento"] = [p["label"] for p in predicoes]
         df["interpretacao"] = [MAPA_SENTIMENTOS.get(p["label"], p["label"]) for p in predicoes]
         df["confianca"] = [round(float(p["score"]), 4) for p in predicoes]
@@ -154,8 +187,13 @@ def processar_lote():
 # --- ROTA 4: ASSISTENTE CONVERSACIONAL COM MINI-RAG (TF-IDF + COSINE SIMILARITY) ---
 @app.post("/chat_esg", response_model=ChatResposta, status_code=status.HTTP_200_OK)
 def chat_esg(payload: ChatEntrada):
-    if analisador_nlp is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Modelo LLM local indisponível.")
+    try:
+        modelo = obter_modelo()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Falha ao carregar modelo LLM local: {str(e)}"
+        )
 
     caminho_base = CAMINHO_PROCESSED if CAMINHO_PROCESSED.exists() else CAMINHO_RAW
     noticias_texto = []
@@ -165,11 +203,9 @@ def chat_esg(payload: ChatEntrada):
             coluna_texto = df.columns[0]
             noticias_texto = df[coluna_texto].astype(str).tolist()
 
-    # Recupera memória conversacional (últimas 3 mensagens do usuário)
     ultimas_perguntas = [m.content for m in payload.historico[-3:] if m.role == "user"]
     consulta_contextual = " ".join(ultimas_perguntas + [payload.pergunta]).strip()
 
-    # Busca semântica leve com TF-IDF + Similaridade de Cosseno
     relacionadas = []
     if noticias_texto:
         try:
@@ -178,14 +214,13 @@ def chat_esg(payload: ChatEntrada):
             similaridades = cosine_similarity(matriz_tfidf[-1], matriz_tfidf[:-1]).flatten()
             indices_top = similaridades.argsort()[::-1]
 
-            # Filtra resultados com similaridade > 0.05; se nenhum atingir, pega os top 3
             relacionadas = [noticias_texto[i] for i in indices_top if similaridades[i] > 0.05][:4]
             if not relacionadas:
                 relacionadas = [noticias_texto[i] for i in indices_top[:3]]
         except Exception:
             relacionadas = noticias_texto[:3]
 
-    predicao = analisador_nlp(payload.pergunta, truncation=True, max_length=512)[0]
+    predicao = modelo(payload.pergunta, truncation=True, max_length=512)[0]
     tom = MAPA_SENTIMENTOS.get(predicao["label"], predicao["label"])
 
     qtd_turnos = len([m for m in payload.historico if m.role == "user"])

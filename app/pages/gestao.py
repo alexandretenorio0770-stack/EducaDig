@@ -12,14 +12,14 @@ CAMINHO_PROCESSED = RAIZ_PROJETO / "data" / "processed" / "noticias_classificada
 SCRIPT_SCRAPING = RAIZ_PROJETO / "src" / "scraping_dynamic.py"
 API_URL = "http://127.0.0.1:8000"
 
-st.header("⚙️ Orquestração do Pipeline de Dados & IA")
+st.header(" Orquestração do Pipeline de Dados & IA")
 st.markdown("Execute o ciclo completo de Engenharia de Dados (Extração $\\rightarrow$ Enriquecimento LLM $\\rightarrow$ Exportação) diretamente pela interface.")
 
 col_btn1, col_btn2 = st.columns(2)
 
 # 1. Botão para executar o Selenium
 with col_btn1:
-    if st.button("🔄 1. Coletar Novas Notícias (Selenium)", use_container_width=True):
+    if st.button(" 1. Coletar Novas Notícias (Selenium)", use_container_width=True):
         with st.spinner("Executando WebDriver do Selenium no Observatório do 3º Setor..."):
             resultado = subprocess.run(
                 [sys.executable, str(SCRIPT_SCRAPING)],
@@ -36,7 +36,7 @@ with col_btn1:
 
 # 2. Botão para classificar toda a base em lote via FastAPI
 with col_btn2:
-    if st.button("🧠 2. Classificar Toda a Base com IA (Lote)", type="primary", use_container_width=True):
+    if st.button(" 2. Classificar Toda a Base com IA (Lote)", type="primary", use_container_width=True):
         with st.spinner("Processando todas as notícias no modelo Hugging Face local..."):
             try:
                 resp = requests.post(f"{API_URL}/processar_lote", timeout=60)
@@ -54,7 +54,7 @@ st.divider()
 # 3. Visualização dos Dados Enriquecidos e Gráfico Macro
 if CAMINHO_PROCESSED.exists():
     df_proc = pd.read_csv(CAMINHO_PROCESSED).fillna("")
-    st.subheader("📊 Panorama de Sentimentos da Base Enriquecida")
+    st.subheader(" Panorama de Sentimentos da Base Enriquecida")
 
     col_graf, col_tab = st.columns([1, 2])
 
@@ -75,7 +75,7 @@ if CAMINHO_PROCESSED.exists():
         st.dataframe(df_proc, use_container_width=True)
         csv_bytes = df_proc.to_csv(index=False).encode("utf-8")
         st.download_button(
-            label="📥 Baixar Base Enriquecida (CSV)",
+            label=" Baixar Base Enriquecida (CSV)",
             data=csv_bytes,
             file_name="educadig_noticias_classificadas.csv",
             mime="text/csv"
