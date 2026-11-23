@@ -1,25 +1,29 @@
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
 from transformers import pipeline
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 from pathlib import Path
+from typing import List
 import pandas as pd
 import logging
 
-# Configuração de logs para acompanhamento no terminal
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="EducaDig ESG API - TP4",
-    description="API local com FastAPI e HuggingFace para monitoramento e análise de sentimentos sobre ODS 4.",
-    version="2.0.0"
+    title="EducaDig ESG API - Enterprise Local",
+    description="API local com ETL em lote, NLP (Hugging Face) e RAG leve (TF-IDF) para monitoramento ESG/ODS 4.",
+    version="4.0.0"
 )
 
 # --- CAMINHOS DO PROJETO ---
 RAIZ_PROJETO = Path(__file__).resolve().parent.parent
-CAMINHO_CSV = RAIZ_PROJETO / "data" / "raw" / "noticias_esg.csv"
+CAMINHO_RAW = RAIZ_PROJETO / "data" / "raw" / "noticias_esg.csv"
+PASTA_PROCESSED = RAIZ_PROJETO / "data" / "processed"
+CAMINHO_PROCESSED = PASTA_PROCESSED / "noticias_classificadas.csv"
 
-# --- CONFIGURAÇÃO DO MODELO LLM LOCAL ---
+# --- MODELO LLM LOCAL ---
 MODELO_NOME = "pysentimiento/bertweet-pt-sentiment"
 analisador_nlp = None
 
@@ -33,22 +37,16 @@ MAPA_SENTIMENTOS = {
 def carregar_modelo_local():
     global analisador_nlp
     try:
-        logger.info(f"Iniciando download/carregamento local do modelo: {MODELO_NOME}...")
+        logger.info(f"Carregando modelo local: {MODELO_NOME}...")
         analisador_nlp = pipeline("sentiment-analysis", model=MODELO_NOME)
-        logger.info("Modelo LLM carregado na memória com sucesso!")
+        logger.info("Modelo carregado com sucesso!")
     except Exception as e:
-        logger.error(f"Erro crítico ao carregar o modelo local: {e}")
+        logger.error(f"Erro ao carregar modelo: {e}")
         analisador_nlp = None
 
-# --- SCHEMAS PYDANTIC (VALIDAÇÃO E RESPONSE MODELS) ---
+# --- SCHEMAS PYDANTIC ---
 class TextoEntrada(BaseModel):
-    texto: str = Field(
-        ..., 
-        min_length=10, 
-        max_length=2000,
-        description="Título ou trecho da notícia sobre educação/ESG para análise.",
-        examples=["Novas escolas públicas recebem laboratórios de informática e internet de alta velocidade."]
-    )
+    texto: str = Field(..., min_length=10, max_length=2000)
 
 class ResultadoAnalise(BaseModel):
     texto_analisado: str
@@ -58,38 +56,49 @@ class ResultadoAnalise(BaseModel):
     interpretacao: str
     confianca: float
 
-# --- ROTAS DO TP3 (CONSULTA AOS DADOS EXTRAÍDOS) ---
+class ResumoLote(BaseModel):
+    mensagem: str
+    total_processado: int
+    distribuicao: dict
+    arquivo_salvo: str
+
+class MensagemChat(BaseModel):
+    role: str
+    content: str
+
+class ChatEntrada(BaseModel):
+    pergunta: str = Field(..., min_length=3)
+    historico: List[MensagemChat] = []
+
+class ChatResposta(BaseModel):
+    resposta: str
+    total_noticias_base: int
+    noticias_relacionadas: List[str]
+    polaridade_consulta: str
+
+# --- ROTA 1: LISTAGEM DE NOTÍCIAS ---
 @app.get("/noticias", status_code=status.HTTP_200_OK)
 def listar_noticias():
-    if not CAMINHO_CSV.exists():
+    caminho = CAMINHO_PROCESSED if CAMINHO_PROCESSED.exists() else CAMINHO_RAW
+    if not caminho.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Base de dados não encontrada. Execute o script de scraping primeiro."
+            detail="Nenhuma base de notícias encontrada. Execute o scraping primeiro."
         )
-    df = pd.read_csv(CAMINHO_CSV)
-    return {"total": len(df), "dados": df.to_dict(orient="records")}
+    df = pd.read_csv(caminho).fillna("")
+    return {"fonte": caminho.name, "total": len(df), "dados": df.to_dict(orient="records")}
 
-# --- ROTA DO TP4 (PROCESSAMENTO COM LLM LOCAL) ---
+# --- ROTA 2: CLASSIFICAÇÃO INDIVIDUAL ---
 @app.post("/processar_texto", response_model=ResultadoAnalise, status_code=status.HTTP_200_OK)
 def processar_texto(payload: TextoEntrada):
-    # 1. Erro 503: Falha no carregamento do modelo
     if analisador_nlp is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="O modelo LLM local não está carregado. Verifique a conexão inicial para download ou os logs do servidor."
-        )
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Modelo LLM local indisponível.")
 
-    # 2. Erro 400: Entrada vazia após limpeza
     texto_limpo = payload.texto.strip()
     if len(texto_limpo) < 10:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="O texto enviado precisa ter pelo menos 10 caracteres válidos após remoção de espaços."
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="O texto precisa ter ao menos 10 caracteres válidos.")
 
-    # 3. Inferência local com tratamento de exceções (Erro 500)
     try:
-        # Modelos BERT têm limite de 512 tokens; truncamos por segurança de memória
         predicao = analisador_nlp(texto_limpo, truncation=True, max_length=512)[0]
         sigla = predicao["label"]
         score = round(float(predicao["score"]), 4)
@@ -103,8 +112,101 @@ def processar_texto(payload: TextoEntrada):
             confianca=score
         )
     except Exception as e:
-        logger.error(f"Erro durante a inferência: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Falha interna ao processar o texto no modelo local: {str(e)}"
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Erro interno: {str(e)}")
+
+# --- ROTA 3: ENRIQUECIMENTO EM LOTE (ETL + IA) ---
+@app.post("/processar_lote", response_model=ResumoLote, status_code=status.HTTP_200_OK)
+def processar_lote():
+    if analisador_nlp is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Modelo LLM local indisponível.")
+    if not CAMINHO_RAW.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Arquivo data/raw/noticias_esg.csv não encontrado.")
+
+    try:
+        df = pd.read_csv(CAMINHO_RAW).fillna("")
+        if df.empty:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="O CSV bruto está vazio.")
+
+        coluna_texto = df.columns[0]
+        textos = df[coluna_texto].astype(str).tolist()
+
+        predicoes = analisador_nlp(textos, truncation=True, max_length=512)
+        df["sentimento"] = [p["label"] for p in predicoes]
+        df["interpretacao"] = [MAPA_SENTIMENTOS.get(p["label"], p["label"]) for p in predicoes]
+        df["confianca"] = [round(float(p["score"]), 4) for p in predicoes]
+
+        PASTA_PROCESSED.mkdir(parents=True, exist_ok=True)
+        df.to_csv(CAMINHO_PROCESSED, index=False, encoding="utf-8")
+
+        contagem = df["sentimento"].value_counts().to_dict()
+
+        return ResumoLote(
+            mensagem="Base enriquecida com sucesso pelo modelo LLM local.",
+            total_processado=len(df),
+            distribuicao=contagem,
+            arquivo_salvo=str(CAMINHO_PROCESSED.relative_to(RAIZ_PROJETO))
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Falha no processamento em lote: {str(e)}")
+
+# --- ROTA 4: ASSISTENTE CONVERSACIONAL COM MINI-RAG (TF-IDF + COSINE SIMILARITY) ---
+@app.post("/chat_esg", response_model=ChatResposta, status_code=status.HTTP_200_OK)
+def chat_esg(payload: ChatEntrada):
+    if analisador_nlp is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Modelo LLM local indisponível.")
+
+    caminho_base = CAMINHO_PROCESSED if CAMINHO_PROCESSED.exists() else CAMINHO_RAW
+    noticias_texto = []
+    if caminho_base.exists():
+        df = pd.read_csv(caminho_base).fillna("")
+        if not df.empty:
+            coluna_texto = df.columns[0]
+            noticias_texto = df[coluna_texto].astype(str).tolist()
+
+    # Recupera memória conversacional (últimas 3 mensagens do usuário)
+    ultimas_perguntas = [m.content for m in payload.historico[-3:] if m.role == "user"]
+    consulta_contextual = " ".join(ultimas_perguntas + [payload.pergunta]).strip()
+
+    # Busca semântica leve com TF-IDF + Similaridade de Cosseno
+    relacionadas = []
+    if noticias_texto:
+        try:
+            vetorizador = TfidfVectorizer()
+            matriz_tfidf = vetorizador.fit_transform(noticias_texto + [consulta_contextual])
+            similaridades = cosine_similarity(matriz_tfidf[-1], matriz_tfidf[:-1]).flatten()
+            indices_top = similaridades.argsort()[::-1]
+
+            # Filtra resultados com similaridade > 0.05; se nenhum atingir, pega os top 3
+            relacionadas = [noticias_texto[i] for i in indices_top if similaridades[i] > 0.05][:4]
+            if not relacionadas:
+                relacionadas = [noticias_texto[i] for i in indices_top[:3]]
+        except Exception:
+            relacionadas = noticias_texto[:3]
+
+    predicao = analisador_nlp(payload.pergunta, truncation=True, max_length=512)[0]
+    tom = MAPA_SENTIMENTOS.get(predicao["label"], predicao["label"])
+
+    qtd_turnos = len([m for m in payload.historico if m.role == "user"])
+    ref_memoria = f"Considerando o histórico da nossa conversa ({qtd_turnos} turno(s) anterior(es)), " if qtd_turnos > 0 else ""
+
+    if relacionadas:
+        lista_formatada = "\n".join([f"- *{item}*" for item in relacionadas])
+        resposta_texto = (
+            f"{ref_memoria}realizei uma busca semântica na base de **{len(noticias_texto)} notícias** do Observatório do Terceiro Setor.\n\n"
+            f"**Evidências mais relevantes encontradas:**\n{lista_formatada}\n\n"
+            f"**Diagnóstico ESG / ODS 4:** O enfoque da sua consulta apresenta tom **{tom}**. "
+            f"Esses registros servem como insumo direto para relatórios de impacto e governança educacional."
+        )
+    else:
+        resposta_texto = (
+            f"{ref_memoria}nenhuma notícia foi encontrada na base local. Dispare a coleta via Selenium na página de Gestão de Dados."
+        )
+
+    return ChatResposta(
+        resposta=resposta_texto,
+        total_noticias_base=len(noticias_texto),
+        noticias_relacionadas=relacionadas,
+        polaridade_consulta=tom
+    )

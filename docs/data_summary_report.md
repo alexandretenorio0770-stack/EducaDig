@@ -1,44 +1,21 @@
-# 📊 Data Summary Report — EducaDig ESG (Revisão TP3)
+# Data Summary Report — Projeto EducaDig ESG
 
-## 1. Resumo das Fontes de Dados
+## 1. Visão Geral das Fontes de Dados
+O projeto **EducaDig ESG** utiliza dados reais coletados da web para monitorar o debate público e as iniciativas relacionadas à Educação de Qualidade e Inclusão Digital (**ODS 4 — Agenda 2030**).
 
-O projeto **EducaDig ESG** combina dados estruturados de APIs governamentais com dados não estruturados e semi-estruturados coletados via Web Scraping estático e dinâmico.
+* **Fonte Principal:** Portal *Observatório do Terceiro Setor* (`https://observatorio3setor.org.br/`).
+* **Método de Coleta:** Web scraping dinâmico automatizado via `Selenium` (`src/scraping_dynamic.py`), capaz de aguardar a renderização de elementos assíncronos em JavaScript.
+* **Armazenamento Persistente:** Os registros extraídos são estruturados com `pandas` e gravados em `data/raw/noticias_esg.csv` (codificação `UTF-8`), utilizando gerenciamento dinâmico de caminhos absolutos (`pathlib`) para garantir portabilidade entre ambientes.
 
-| Fonte | Tipo de Fonte | Método de Extração | Formato Final | Frequência / Uso |
-| :--- | :--- | :--- | :--- | :--- |
-| **IBGE (API Localidades)** | API REST Pública | Requisições HTTP (`requests`) | DataFrame / Session | Dados de municípios do estado de São Paulo |
-| **Observatório do Terceiro Setor** | Web Page Estática | `BeautifulSoup4` (`src/scraping.py`) | CSV / TXT | Notícias e artigos focados em ODS 4 |
-| **Portais de Notícias ESG** | Web Page Dinâmica | `Selenium` (`src/scraping_dynamic.py`) | CSV / TXT | Conteúdo com carregamento assíncrono / JS |
-| **FastAPI Backend** | API Interna REST | Endpoints HTTP (`src/api_fastapi.py`) | JSON / Dataframe | Consumo e cadastro centralizado de dados |
+## 2. Pré-processamento e Qualidade dos Dados
+Para transformar os textos brutos coletados em insumos analíticos e alimentadores de modelos de IA, foram aplicadas as seguintes etapas:
 
----
+* **Tratamento de Nulos e Padronização:** Remoção de espaços excedentes (`strip()`) e preenchimento preventivo de valores ausentes (`fillna("")`) na leitura da API e do dashboard.
+* **Mineração de Texto (NLP):** Filtragem personalizada de *stopwords* da língua portuguesa (artigos, preposições e conectivos) para isolar os termos de maior relevância semântica na geração da Nuvem de Palavras (`WordCloud`).
+* **Preparação para Inferência LLM:** Truncamento controlado de tokens (`max_length=512`) na camada da API para adequação à janela de contexto da arquitetura BERTweet sem comprometer a memória RAM local.
 
-## 2. Estrutura dos Arquivos de Dados (`data/raw/`)
-
-### A. `data/raw/noticias_esg.csv`
-Armazena a listagem de matérias capturadas pelos scripts de scraping.
-* **Campos:** `titulo`, `link`, `data_publicacao`, `resumo`, `fonte`.
-* **Utilização:** Exibição no Streamlit, filtros na API FastAPI e input para futura classificação por LLM.
-
-### B. `data/raw/texto_esg.txt`
-Arquivo consolidado com o corpo de texto de todos os artigos extraídos.
-* **Estrutura:** Texto corrido limpo de caracteres especiais e tags HTML.
-* **Utilização:** Geração da Nuvem de Palavras (`WordCloud`) e preparação de *chunks* de texto para tarefas de RAG/Sumarização na etapa de LLM.
-
----
-
-## 3. Estratégia de Preparação para IA e LLMs (Visão TP4)
-
-Para garantir uma transição fluida para a próxima fase do projeto, os dados coletados no TP3 foram preparados estrategicamente para os seguintes casos de uso com LLMs:
-
-1. **Sumarização Executiva (Text Summarization):**
-   * *Dataset:* `texto_esg.txt` / `noticias_esg.csv`.
-   * *Aplicação:* Condensar longas matérias sobre políticas públicas e editais em boletins curtos para tomada de decisão ESG.
-
-2. **Análise de Sentimentos e Impacto:**
-   * *Dataset:* `titulos` e `resumos` das notícias.
-   * *Aplicação:* Classificar o tom das notícias (ex: "Crítico - Falta de Infraestrutura", "Positivo - Investimento Realizado", "Neutro") para medir o índice de urgência regional.
-
-3. **Sistema de Perguntas e Respostas (RAG - Question Answering):**
-   * *Dataset:* Corpus textual acumulado na pasta `data/`.
-   * *Aplicação:* Permitir que gestores perguntem à plataforma: *"Quais foram os principais desafios de conectividade relatados nas escolas públicas em 2026?"*.
+## 3. Fluxo de Integração (Pipeline Completo)
+1. **Extração (`scraping_dynamic.py`):** Coleta as manchetes e conteúdos dinâmicos e salva em `data/raw/noticias_esg.csv`.
+2. **Serviço Backend (`src/api_fastapi.py`):** Expõe os dados via REST (`GET /noticias`), realiza classificação de polaridade (`POST /processar_texto`) e gerencia consultas contextuais (`POST /chat_esg`).
+3. **Orquestração (`Procfile`):** Inicializa simultaneamente o servidor Uvicorn (porta `8000`) e a interface Streamlit (porta `8501`).
+4. **Camada Visual (`main.py` e `app/pages/`):** Apresenta o panorama territorial, indicadores do ODS 4, nuvem de palavras, classificador de sentimentos e assistente conversacional em tempo real.

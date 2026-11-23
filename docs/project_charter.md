@@ -1,54 +1,21 @@
-# 📋 Project Charter — EducaDig ESG (Revisão TP3)
+# Project Charter — EducaDig ESG (Consolidação Final)
 
-## 1. Problema de Negócio & Contexto
-A falta de centralização e visibilidade sobre a infraestrutura tecnológica de escolas públicas no Brasil dificulta o direcionamento eficiente de recursos de investimento privado (ESG) e ações de ONGs. O **EducaDig ESG** visa solucionar essa fragmentação mapeando dados territoriais e analisando o cenário da inclusão digital sob o prisma do **ODS 4 (Educação de Qualidade)**.
+## 1. Problema de Negócio e Alinhamento ESG / ODS
+Organizações do terceiro setor, gestores públicos e áreas de sustentabilidade corporativa enfrentam dificuldades para acompanhar, de forma estruturada e contínua, o volume de notícias e indicadores sobre **Educação de Qualidade e Inclusão Digital (ODS 4 da Agenda 2030)**.
 
-Na fase **TP3**, a solução evolui de um painel isolado para uma **plataforma orientada a microsserviços/APIs**, integrando raspagem dinâmica de dados e preparando o terreno para análises avançadas com Inteligência Artificial Generativa (LLM).
+O **EducaDig ESG** resolve esse problema entregando uma plataforma local de Ciência de Dados Aplicada que automatiza a coleta de notícias do setor social, extrai padrões temáticos e utiliza Processamento de Linguagem Natural (NLP) para classificar o tom editorial e apoiar consultas analíticas.
 
----
+## 2. Arquitetura da Solução e Ciclo de Ciência de Dados
+A solução foi desenhada seguindo o framework **TDSP (Team Data Science Process)**, cobrindo o ciclo ponta a ponta:
 
-## 2. Objetivos do Projeto (Atualizados - TP3)
-* **Arquitetura Desmistificada:** Implementar uma API RESTful utilizando **FastAPI** para servir dados de ODS 4 e estatísticas da plataforma.
-* **Interface Multipágina:** Reestruturar o aplicativo Streamlit em **múltiplas páginas nativas** (`pages/`), otimizando a experiência do usuário.
-* **Scraping Híbrido:** Expandir a coleta de dados combinando **BeautifulSoup** (scraping estático) e **Selenium** (scraping dinâmico com renderização JavaScript/interações).
-* **Preparação para LLM (TP4):** Estruturar os datasets textuais (`data/raw/*.txt`) para alimentar pipelines de RAG, Sumarização Automática e Análise de Sentimento na fase subsequente.
+* **Coleta & Engenharia de Dados:** Extração automatizada com Selenium e armazenamento estruturado em CSV com caminhos independentes de diretório (`pathlib`).
+* **Análise Exploratória & Visualização:** Dashboard multipágina em Streamlit (`st.navigation`) exibindo panorama territorial, gestão dos dados coletados e nuvem de palavras filtrada.
+* **Modelagem & Inteligência Artificial Local:** Integração do modelo `pysentimiento/bertweet-pt-sentiment` (Hugging Face) via FastAPI, rodando 100% em CPU local, com contratos validados por `Pydantic` e tratamento robusto de exceções HTTP (`400`, `404`, `422`, `500`, `503`).
+* **Solução Conversacional (Memória de Sessão):** Implementação de um Consultor ESG (`POST /chat_esg` + `st.session_state`) que mantém o histórico de interações do usuário e cruza perguntas em linguagem natural com as notícias reais da base de dados.
 
----
+## 3. Benefícios e Impacto para Tomada de Decisão
+* **Soberania e Baixo Custo Computacional:** Execução integralmente local (~440 MB), sem custos de APIs externas ou envio de dados sensíveis para terceiros.
+* **Agilidade Analítica:** Reduz o tempo de leitura manual de portais de notícias, destacando imediatamente avanços (`POS`), fatos descritivos (`NEU`) e pontos de alerta (`NEG`) ligados à educação.
 
-## 3. Escopo do Projeto
-
-### Em Escopo (TP3):
-1. **API Backend (FastAPI):**
-   * Endpoint `GET /api/v1/noticias`: Consulta filtrada de artigos sobre ODS 4.
-   * Endpoint `POST /api/v1/noticias`: Submissão de novas matérias para o dataset.
-   * Endpoint `GET /api/v1/estatisticas`: Métricas consolidadas sobre os dados coletados.
-   * Documentação interativa via Swagger UI (`/docs`).
-2. **Frontend Multipágina (Streamlit):**
-   * Página Home (Visão Geral & Métricas).
-   * Página 1: Panorama Territorial (Dados IBGE).
-   * Página 2: Notícias, Scraping & Nuvem de Palavras.
-   * Página 3: Gestão de Dados, Upload e Persistência (`st.session_state`).
-   * Página 4: Portal de Integração com a API FastAPI.
-3. **Pipeline de Coleta de Dados:**
-   * Script Selenium (`src/scraping_dynamic.py`) para navegação assíncrona.
-   * Armazenamento estruturado na pasta `data/raw/`.
-
-### Fora do Escopo (Adiado para TP4):
-* Implementação dos prompts finais e conexão com APIs de LLM (OpenAI/Gemini/Ollama).
-* Criação de banco de dados vetorial (Vector Database) para RAG.
-
----
-
-## 4. Arquitetura Técnica & Tecnologias
-* **Linguagem:** Python 3.10+
-* **Frontend:** Streamlit (Multipage Architecture)
-* **Backend / API:** FastAPI + Uvicorn
-* **Scraping:** BeautifulSoup4, Requests & Selenium WebDriver
-* **Processamento de Dados:** Pandas, NumPy
-* **Visualização:** Matplotlib, WordCloud
-* **Versionamento:** Git / GitHub
-
----
-
-## 🟢 Declaração de Transparência (Uso de IA)
-Em conformidade com as diretrizes do trabalho (**Sinal Verde 🟢**), declara-se que o código base das rotas do FastAPI, refatoração das páginas em Streamlit e estruturação desta documentação contaram com o suporte de Inteligência Artificial Generativa.
+## 4. Declaração de Uso de Inteligência Artificial
+Em conformidade com as diretrizes de integridade acadêmica da disciplina, registra-se que ferramentas de IA generativa (**Google Gemini**) foram utilizadas como suporte técnico para pesquisa de modelos leves na Hugging Face, estruturação dos endpoints FastAPI/Pydantic, integração da memória conversacional no Streamlit e revisão da documentação do TDSP. Todo o código e os artefatos foram adaptados, executados e validados localmente pelo autor.
